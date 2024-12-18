@@ -6,6 +6,7 @@ import warnings
 warnings.filterwarnings("ignore")
 import PIL.Image
 import matplotlib.pyplot as plt
+import json
 
 # from dotenv import load_dotenv
 # load_dotenv(dotenv_path='./.env')
@@ -13,7 +14,6 @@ import matplotlib.pyplot as plt
 
 class AnalystAgent:
     def __init__(self):
-        self.endpoint = "https://pepgenx-code-interpreter.azurewebsites.net/load_and_run"
         self.client = AzureOpenAI(
                                     api_key=os.getenv("AZURE_OPENAI_KEY"),
                                     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
@@ -26,38 +26,52 @@ class AnalystAgent:
         for i in range(a):
             msgs += str(i+1) + ") " + (str(state["messages"][i])) + " "
         
-        payload = {
-            "api_key": os.getenv("AZURE_OPENAI_KEY"),
-            "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
-            "api_version": "2024-05-01-preview",
-            "model": "pepgenx-agentic-gpt4o",
-            "role": "user",
-            "content": msgs,
-            "assistant_id": "asst_MvRMP9S57pDQcuhNBJUeG7fo",
-            "thread_id": "thread_jXrPIHwfTVnGZcMrWjRzdxCS"
-            }
+
+        assistant_id= "asst_MvRMP9S57pDQcuhNBJUeG7fo"
+        thread_id= "thread_jXrPIHwfTVnGZcMrWjRzdxCS"
         
-        response = requests.post(self.endpoint, json=payload)
-        response.raise_for_status() 
-        response_data = response.json()
+        attachments = []
+            # print("I am sending this attachment: ", attachments)
+
+
+        self.client.beta.assistants.retrieve(assistant_id= assistant_id)
+
+        self.client.beta.threads.messages.create(
+                    thread_id=thread_id,
+                    role="user",
+                    content=msgs,
+                    attachments = attachments
+                    )
+        run = self.client.beta.threads.runs.create_and_poll(
+                    thread_id=thread_id,
+                    assistant_id=assistant_id,
+                )
+        
+
+        if run.status == 'completed':
+            messages = self.client.beta.threads.messages.list(thread_id=thread_id)
+            output = messages
+        elif run.status == 'requires_action':
+            output = run.status
+            pass
+        else:
+            output = run.status
+        response_data = output.model_dump_json()
+        response_data = json.loads(response_data)
         final_response = ""
-        for i in response_data['data'][0]['content']:
-            if "image_file" in i:
-                image_id = i['image_file']['file_id']
-                final_response += image_id + " ; "
-                image_data = self.client.files.content(image_id)
+        if "content" in response_data['data'][0]:
+            for i in response_data['data'][0]['content']:
+                if "image_file" in i:
+                    image_id = i['image_file']['file_id']
+                    final_response += image_id + " ; "
 
-                image_data_bytes = image_data.read()
-                with open("./my-image.png", "wb") as file:
-                    file.write(image_data_bytes)
-                img = PIL.Image.open('my-image.png')
-                plt.imshow(img)
-                plt.axis('off')
-                plt.show()
+                if "text" in i:
+                    text = i['text']['value']
+                    final_response += text
 
-            if "text" in i:
-                text = i['text']['value']
-                final_response += text
+        else:
+            final_response = "Unable to parse response: 'content' key not found."
+            
         final_response += " sender: Analyst Agent"
         state = {
             "messages": [AIMessage(content=final_response)],
